@@ -16,7 +16,6 @@ import re
 import sys
 import time
 import urllib.parse
-from pathlib import Path
 
 from wuxia_autoclaim import ams, config
 from wuxia_autoclaim.log import log

@@ -40,7 +40,7 @@ def check_roles(data):
     return dead
 
 
-def try_game(data, cfg):
+def try_game(data, cfg, dead_uins=None):
     """通道 game: 游戏目录缓存。返回 updated(已更新) / ok(有效无需动) / fail(转下一通道)"""
     from wuxia_autoclaim.gamecache import read_jar, cache_dir
     try:
@@ -50,6 +50,9 @@ def try_game(data, cfg):
         return "fail"
     if not uin or not jar.get("skey"):
         log("[game] 游戏 cookie 库里没有登录态(游戏重启后需开一次活动页), 转下一通道")
+        return "fail"
+    if dead_uins is not None and uin not in dead_uins:
+        log("[game] 游戏 cookie 库的 QQ(%s) 不在失效名单, 转下一通道" % mask(uin))
         return "fail"
     matched = _match(data, uin)
     if not matched:
@@ -69,34 +72,34 @@ def try_game(data, cfg):
     return "updated"
 
 
-def try_qqnt(data):
+def try_qqnt(data, dead_uins=None):
     """通道 qqnt: QQNT 桥 SSO 多账号(见 qqnt.py)。返回 updated / ok / fail"""
     from wuxia_autoclaim.qqnt import update_roles
     try:
-        updated, matched = update_roles(data)
+        updated, fixed = update_roles(data, dead_uins)
     except RuntimeError as e:
         log("[qqnt] %s" % e)
         return "fail"
     if updated:
         return "updated"
-    if matched:
+    if fixed:
         return "ok"
     return "fail"
 
 
-def try_napcat(data, cfg, bind_new=False):
+def try_napcat(data, cfg, bind_new=False, dead_uins=None):
     """通道 napcat: OneBot HTTP clientkey 签发(见 napcat.py)。返回 updated / ok / fail"""
     from wuxia_autoclaim.napcat import harvest_napcat, NapCatError
     try:
-        updated, matched = harvest_napcat(data, cfg, bind_new=bind_new)
+        updated, fixed = harvest_napcat(data, cfg, bind_new=bind_new, dead_uins=dead_uins)
     except NapCatError as e:
         log("[napcat] %s" % e)
         return "fail"
-    if not matched:
-        return "fail"
     if updated:
         return "updated"
-    return "ok"
+    if fixed:
+        return "ok"
+    return "fail"
 
 
 def harvest_once(data, cfg, order=None, bind_new=False, dead=None):
@@ -111,17 +114,18 @@ def harvest_once(data, cfg, order=None, bind_new=False, dead=None):
     if data.get("roles") and not dead:
         log("[check] %d 个角色凭据全部有效, 无需收割" % len(data["roles"]))
         return True
+    dead_uins = {r.get("uin") for r in dead}
 
     channels = {
-        "napcat": lambda: try_napcat(data, cfg, bind_new=bind_new),
-        "qqnt": lambda: try_qqnt(data),
-        "game": lambda: try_game(data, cfg),
+        "napcat": lambda: try_napcat(data, cfg, bind_new=bind_new, dead_uins=dead_uins),
+        "qqnt": lambda: try_qqnt(data, dead_uins=dead_uins),
+        "game": lambda: try_game(data, cfg, dead_uins=dead_uins),
     }
     for name in order:
         status = channels[name]()
         if status == "updated":
             config.save_roles(data)
-            log("已回写 roles.json (%d 个角色更新)" % len(data.get("roles", [])))
+            log("已回写 %s" % config.roles_file())
             return True
         if status == "ok":
             return True

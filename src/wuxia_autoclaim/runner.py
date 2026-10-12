@@ -34,6 +34,9 @@ def run(args):
     if not roles:
         log("[run] roles.json 里没有角色, 退出")
         return 2
+    if getattr(args, "index", 0):
+        for r in roles:
+            r["gift_index"] = args.index
 
     # 体检: 只决定要不要收割, 不影响后面的签到执行
     dead = check_roles(data)

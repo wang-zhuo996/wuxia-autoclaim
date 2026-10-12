@@ -84,28 +84,30 @@ class QqntBridge(PtClient):
         raise RuntimeError("账号 %s 在端口 %d 没有拿到 clientkey" % (mask(uin), port))
 
 
-def update_roles(data):
+def update_roles(data, dead_uins=None):
     """扫描桥上所有在线账号, 给 roles 里匹配的角色签发新凭据(就地更新 data)。
 
-    返回 (更新数, 匹配到的角色数)。
+    dead_uins 是本轮判定失效的 QQ 号集合; 命中且探测有效才计入"修复"。
+    返回 (更新数, 修复的失效账号数)。
     """
     cli = QqntBridge()
     accs = cli.accounts()
     if not accs:
         raise RuntimeError("桥上没有在线账号(QQ 客户端开了吗?)")
-    updated = matched_n = 0
+    updated = fixed = 0
     for uin, info in accs.items():
         matched = [r for r in data.get("roles", []) if r.get("uin") == uin]
         if not matched:
             log("[qqnt] QQ%s(%s, 端口%d) 不在 roles.json, 跳过"
                 % (mask(uin), info["nick"], info["port"]))
             continue
-        matched_n += len(matched)
         jar = cli.mint(uin, cli.clientkey(uin, info["port"]), xlogin_first=False)
         ok, desc = ams.probe(jar, matched[0])
         if not ok:
             log("[qqnt] QQ%s 新签凭据探测失败(%s), 不写入" % (mask(uin), desc))
             continue
+        if dead_uins is None or uin in dead_uins:
+            fixed += 1
         changed = any(r.get("cookies", {}).get("skey") != jar.get("skey") for r in matched)
         for r in matched:
             r["cookies"] = dict(jar)
@@ -116,4 +118,4 @@ def update_roles(data):
                    "有" if jar.get("pt4_token") else "无"))
         else:
             log("[qqnt] QQ%s(%s) 凭据与当前一致(%s)" % (mask(uin), info["nick"], desc))
-    return updated, matched_n
+    return updated, fixed

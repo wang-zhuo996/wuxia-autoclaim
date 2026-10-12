@@ -29,8 +29,8 @@ def log(msg):
     except UnicodeEncodeError:   # GBK 控制台打不出某些字符(如昵称里的 †)时降级
         enc = sys.stdout.encoding or "gbk"
         print(line.encode(enc, errors="replace").decode(enc))
-    except OSError:
-        pass                     # pythonw 无 stdout 时静默
+    except Exception:
+        pass                     # pythonw 无 stdout / 输出被重定向关闭时静默
     if _file is None:
         return
     try:

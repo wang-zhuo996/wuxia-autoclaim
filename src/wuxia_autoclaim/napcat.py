@@ -86,16 +86,17 @@ def _get_cookies_fallback(url, token):
     return jar
 
 
-def harvest_napcat(data, cfg, bind_new=False):
+def harvest_napcat(data, cfg, bind_new=False, dead_uins=None):
     """遍历配置的 napcat 端点, 给 roles 里匹配的角色签发新凭据(就地更新 data)。
 
-    返回 (更新数, 匹配到的角色数); 端点全不可用时抛 NapCatError。
+    dead_uins 是本轮判定失效的 QQ 号集合; 命中且探测有效才计入"修复"。
+    返回 (更新数, 修复的失效账号数); 端点全不可用时抛 NapCatError。
     """
     eps = cfg.get("napcat") or []
     if not eps:
         log("[napcat] 未配置 napcat 端点(README 部署节, 或 config napcat-add <url> [token])")
         return 0, 0
-    updated = matched_n = 0
+    updated = fixed = 0
     alive_eps = 0
     seen = set()
     for ep in eps:
@@ -120,7 +121,6 @@ def harvest_napcat(data, cfg, bind_new=False):
             if bind_new or cfg.get("auto_bind"):
                 _bind_new(url, token, uin, nick, data)
             continue
-        matched_n += len(matched)
         jar = None
         try:
             ck = call(url, token, "get_clientkey").get("clientkey", "")
@@ -139,6 +139,8 @@ def harvest_napcat(data, cfg, bind_new=False):
         if not ok:
             log("[napcat] QQ%s 新签凭据探测失败(%s), 不写入" % (mask(uin), desc))
             continue
+        if dead_uins is None or uin in dead_uins:
+            fixed += 1
         changed = any(r.get("cookies", {}).get("skey") != jar.get("skey") for r in matched)
         for r in matched:
             r["cookies"] = dict(jar)
@@ -151,7 +153,7 @@ def harvest_napcat(data, cfg, bind_new=False):
             log("[napcat] QQ%s(%s) 凭据与当前一致(%s)" % (mask(uin), nick, desc))
     if not alive_eps:
         raise NapCatError("所有 napcat 端点都不可用")
-    return updated, matched_n
+    return updated, fixed
 
 
 def _bind_new(url, token, uin, nick, data):
