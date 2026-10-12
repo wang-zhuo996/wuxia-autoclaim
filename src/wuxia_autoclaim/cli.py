@@ -44,6 +44,10 @@ def build_parser():
     p.add_argument("--channel", default="", help="临时覆盖通道顺序")
     p.add_argument("--bind-new", action="store_true", help="收割到新 QQ 时尝试无头绑定角色")
 
+    p = sub.add_parser("gift", parents=[common], help="查看本周许愿物品并选择(序号持久化到角色)")
+    p.add_argument("--role", default="", help="只处理指定角色: 序号/名称/QQ号")
+    p.add_argument("--index", type=int, default=0, help="非交互直接设置奖励序号(1起)")
+
     p = sub.add_parser("status", parents=[common], help="只读体检: 角色/凭据/通道状态")
     p.add_argument("--json", action="store_true", help="以 JSON 输出(便于脚本)")
 
@@ -177,6 +181,79 @@ def cmd_status(args):
     return 0 if roles_ok else 1
 
 
+def cmd_gift(args):
+    """查看/选择许愿物品: 拉取活动当前物品列表, 交互或 --index 选择后写进角色配置"""
+    from wuxia_autoclaim import ams
+    from wuxia_autoclaim.claim import select_roles
+    from wuxia_autoclaim.util import cookie_header, calc_gtk
+    data = config.load_roles()
+    if data is None:
+        log("[!] 未找到 %s, 请先跑 login 或 harvest" % config.roles_file())
+        return 2
+    defaults = data.setdefault("defaults", {})
+    config.apply_env(defaults)
+    roles = select_roles(data, args.role)
+    if not roles:
+        log("[gift] roles.json 里没有角色, 退出")
+        return 2
+
+    changed = bad = 0
+    for r in roles:
+        name = r.get("name") or ("QQ%s" % r.get("uin", "?"))
+        jar = r.get("cookies", {})
+        if not jar.get("skey") or not (r.get("area") and r.get("roleid")):
+            log("[gift] %s 凭据/绑定信息不全, 先跑 harvest/bind" % name)
+            bad += 1
+            continue
+        try:
+            resp = ams.emit(cookie_header(jar), calc_gtk(jar["skey"]),
+                            ams.FLOW_INIT, r.get("area", ""), r.get("roleid", ""))
+        except Exception as e:
+            log("[gift] %s 拉取物品列表失败: %s" % (name, e))
+            bad += 1
+            continue
+        iret = ams.is_login_expired(resp)
+        if iret != "0":
+            log("[gift] %s 登录态异常(iRet=%s), 先跑 harvest" % (name, iret))
+            bad += 1
+            continue
+        week, signed, gifts, toget = ams.parse_init(resp)
+        cur = r.get("gift_index", defaults.get("gift_index", 3))
+
+        if args.index:
+            if not (1 <= args.index <= len(gifts)):
+                log("[gift] %s 序号 %d 超出范围(1-%d)" % (name, args.index, len(gifts)))
+                bad += 1
+                continue
+            r["gift_index"] = args.index
+            changed += 1
+            log("[gift] %s 奖励序号 -> %d (%s)" % (name, args.index, gifts[args.index - 1]["name"]))
+            continue
+
+        print("\n[%s] 今日周%s, 本周物品(当前选第 %d 个):" % (name, "一二三四五六日"[week - 1], cur))
+        for i, g in enumerate(gifts, 1):
+            mark = "   <-- 当前" if i == cur else ""
+            print("    %d. %s%s" % (i, g.get("name", "?"), mark))
+        while True:
+            try:
+                s = input("选择序号(回车=保持 %d): " % cur).strip()
+            except EOFError:      # 无终端(管道/计划任务)时视为只看不改
+                break
+            if not s:
+                break
+            if s.isdigit() and 1 <= int(s) <= len(gifts):
+                r["gift_index"] = int(s)
+                changed += 1
+                log("[gift] %s 奖励序号 -> %s (%s)" % (name, s, gifts[int(s) - 1]["name"]))
+                break
+            print("    输入无效, 请重新输入")
+
+    if changed:
+        config.save_roles(data)
+        log("已回写 %s" % config.roles_file())
+    return 0 if not bad else 1
+
+
 def cmd_task(args):
     from wuxia_autoclaim import taskinstall
     if args.task_cmd == "install":
@@ -263,8 +340,8 @@ def main(argv=None):
         sys.exit(2)
     setup(config.log_file(), quiet=args.quiet)
 
-    handlers = {"run": cmd_run, "harvest": cmd_harvest, "status": cmd_status,
-                "task": cmd_task, "config": cmd_config}
+    handlers = {"run": cmd_run, "harvest": cmd_harvest, "gift": cmd_gift,
+                "status": cmd_status, "task": cmd_task, "config": cmd_config}
     if args.cmd == "login":
         from wuxia_autoclaim import login
         code = login.cmd(args)

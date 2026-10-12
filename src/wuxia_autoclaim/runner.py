@@ -11,10 +11,20 @@
 
 返回退出码: 0=全部成功; 1=有角色失败; 2=致命(没有角色/数据问题)。
 """
+import sys
+
 from wuxia_autoclaim import config
 from wuxia_autoclaim.claim import safe_run_role, select_roles, push_serverchan
 from wuxia_autoclaim.harvest import check_roles
 from wuxia_autoclaim.log import log
+
+
+def _tty():
+    """有交互终端才弹选择; 计划任务/pythonw/管道下 sys.stdin 无效或非 tty"""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except Exception:
+        return False
 
 
 def run(args):
@@ -38,6 +48,12 @@ def run(args):
         for r in roles:
             r["gift_index"] = args.index
 
+    # 手动单角色且在终端里跑: 弹出物品列表交互选择(回车=当前序号);
+    # 计划任务/管道/pythonw 下自动跳过, 直接用配置的序号
+    interactive = (not args.gift and not getattr(args, "index", 0)
+                   and not args.claim_only and len(roles) == 1
+                   and not getattr(args, "quiet", False) and _tty())
+
     # 体检: 只决定要不要收割, 不影响后面的签到执行
     dead = check_roles(data)
     if dead and not args.no_harvest:
@@ -46,7 +62,8 @@ def run(args):
         harvest_once(data, cfg, order=order, bind_new=args.bind_new, dead=dead)
 
     results = [safe_run_role(r, defaults, claim_only=args.claim_only,
-                             gift_id=args.gift if args.gift else 0)
+                             gift_id=args.gift if args.gift else 0,
+                             interactive=interactive)
                for r in roles]
     for _, m in results:
         log(m)

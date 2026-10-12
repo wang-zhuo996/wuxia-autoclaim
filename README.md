@@ -91,10 +91,14 @@ cp /旧项目/src/wuxia_autosign/roles.json data/roles.json   # 从旧项目迁�
 # 2. 体检
 wuxia-autoclaim status                 # 角色/凭据/通道一览
 
-# 3. 实跑一次
+# 3. 选许愿物品(可选)
+wuxia-autoclaim gift                   # 查看本周物品列表并选择, 序号记住(按角色)
+wuxia-autoclaim gift --index 2         # 非交互直接设为第 2 个
+
+# 4. 实跑一次
 wuxia-autoclaim run                    # 体检->收割->许愿/领取, 看 data/autoclaim.log
 
-# 4. 安装为周期任务(每小时静默执行)
+# 5. 安装为周期任务(每小时静默执行)
 wuxia-autoclaim task install
 wuxia-autoclaim task status            # 查看下次触发时间
 ```
@@ -117,8 +121,9 @@ Linux:    cp wuxia-autosign/src/wuxia_autosign/roles.json    wuxia-autoclaim/dat
 
 | 命令 | 说明 |
 |---|---|
-| `run` | 周期任务执行体: 体检->收割->许愿/领取->推送。`--role` `--gift` `--index` `--claim-only` `--no-harvest` `--no-push` `--channel` `--bind-new` |
+| `run` | 周期任务执行体: 体检->收割->许愿/领取->推送。`--role` `--gift` `--index` `--claim-only` `--no-harvest` `--no-push` `--channel` `--bind-new`。终端里手动跑**单个角色**且未指定 `--gift/--index` 时, 会弹出物品列表交互选择(回车=当前序号); 计划任务/管道下自动跳过 |
 | `harvest` | 只做凭据体检+收割。`--channel a,b,c` 临时覆盖通道顺序 |
+| `gift` | 查看本周许愿物品并选择, 序号按角色持久化。`--role` 只看某角色, `--index N` 非交互设置; 无终端时等于只看列表 |
 | `status` | 只读体检: 每角色 iRet/已许愿/待领奖(脱敏) + napcat 端点/桥在线账号/游戏缓存目录。`--json` 脚本化 |
 | `login` | 浏览器交互登录绑定角色(需 browser extra)。`--qr`(扫码) `--headed`(网页) `--timeout` |
 | `bind` | 无头绑定: 自动发现缺失的 area/roleid(需 browser extra)。`--uin` `--headed` `--timeout` |
@@ -149,6 +154,7 @@ Linux:    cp wuxia-autosign/src/wuxia_autosign/roles.json    wuxia-autoclaim/dat
 
 **roles.json**(业务, schema 同旧项目): `defaults.gift_index`(许愿奖励序号, 默认 3)、
 `defaults.push_key`(Server酱 SendKey, 不填不推送)、`roles[]`(每角色可单独覆盖 `gift_index`)。
+改奖励序号用 `gift` 命令最直观(能看到本周物品名), 也可 `config set gift_index N` 改全局默认。
 
 **环境变量**: `WUXIA_DATA_DIR` / `WUXIA_GAME_DIR` / `WUXIA_GIFT_INDEX` / `WUXIA_PUSH_KEY`(优先级最高)。
 
