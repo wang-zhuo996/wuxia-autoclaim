@@ -1,0 +1,11 @@
+# 数据目录: 凭据/配置/日志都在里面, 绝不入库
+data/
+!data/.gitkeep
+
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/

@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wuxia-autoclaim"
+version = "0.1.0"
+description = "天刀「周周载愿」本地自动许愿/领取: NapCat/QQNT 双通道凭据, 跨平台定时任务"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = []                    # 核心零依赖, 纯 stdlib(urllib/argparse/sqlite3/ssl)
+
+[project.optional-dependencies]
+browser = ["playwright>=1.40"]       # 仅 login/bind 需要
+dev = ["pytest"]
+
+[project.scripts]
+wuxia-autoclaim = "wuxia_autoclaim.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

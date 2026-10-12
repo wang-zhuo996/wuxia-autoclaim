@@ -1,0 +1,280 @@
+# -*- coding: utf-8 -*-
+"""统一 CLI: wuxia-autoclaim <子命令>
+
+退出码约定: 0=成功/无事可做; 1=业务性失败; 2=致命/环境错误。
+日志恒写 <data>/autoclaim.log, --quiet 只影响控制台输出(pythonw/cron 下也安全)。
+"""
+import argparse
+import json
+import sys
+
+from wuxia_autoclaim import __version__, config
+from wuxia_autoclaim.log import log, setup
+
+
+def build_parser():
+    # 公共选项同时挂到主解析器和各子命令上(SUPPRESS 默认值保证两种写法等价:
+    # wuxia-autoclaim --quiet run  ==  wuxia-autoclaim run --quiet)
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--data-dir", default=argparse.SUPPRESS,
+                        help="数据目录(默认: 源码树 data/ 或系统配置目录)")
+    common.add_argument("--quiet", action="store_true", default=argparse.SUPPRESS,
+                        help="静默模式: 不写控制台, 只写日志文件")
+
+    ap = argparse.ArgumentParser(
+        prog="wuxia-autoclaim",
+        description="天刀「周周载愿」本地自动许愿/领取: NapCat/QQNT 双通道凭据, 跨平台定时任务")
+    ap.add_argument("--data-dir", default="", help=argparse.SUPPRESS)
+    ap.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--version", action="version", version="wuxia-autoclaim %s" % __version__)
+    sub = ap.add_subparsers(dest="cmd")
+
+    p = sub.add_parser("run", parents=[common],
+                       help="执行一轮: 体检->收割->许愿/领取->推送(周期任务执行体)")
+    p.add_argument("--role", default="", help="只跑指定角色: 序号/名称/QQ号")
+    p.add_argument("--gift", type=int, default=0, help="指定 giftId")
+    p.add_argument("--index", type=int, default=0, help="按序号选奖励(1起)")
+    p.add_argument("--claim-only", action="store_true", help="仅领奖, 不做今天的许愿")
+    p.add_argument("--no-harvest", action="store_true", help="跳过凭据收割, 只用手头 cookie")
+    p.add_argument("--no-push", action="store_true", help="本次禁用 Server酱推送")
+    p.add_argument("--channel", default="", help="临时覆盖通道顺序(逗号分隔: napcat,qqnt,game)")
+    p.add_argument("--bind-new", action="store_true", help="收割到新 QQ 时尝试无头绑定角色")
+
+    p = sub.add_parser("harvest", parents=[common], help="只做凭据体检+收割, 不许愿")
+    p.add_argument("--channel", default="", help="临时覆盖通道顺序")
+    p.add_argument("--bind-new", action="store_true", help="收割到新 QQ 时尝试无头绑定角色")
+
+    p = sub.add_parser("status", parents=[common], help="只读体检: 角色/凭据/通道状态")
+    p.add_argument("--json", action="store_true", help="以 JSON 输出(便于脚本)")
+
+    p = sub.add_parser("login", parents=[common], help="浏览器交互登录, 绑定角色(需 browser extra)")
+    p.add_argument("--qr", action="store_true", help="扫码登录(仅限已成功登录过的情况)")
+    p.add_argument("--headed", action="store_true", help="网页登录(默认, 推荐)")
+    p.add_argument("--timeout", type=int, default=300, help="等待登录的秒数(默认300)")
+
+    p = sub.add_parser("bind", parents=[common], help="无头绑定: 自动发现缺失的 area/roleid(需 browser extra)")
+    p.add_argument("--uin", default="", help="只处理该 QQ 号(缺省=所有缺绑定信息的)")
+    p.add_argument("--headed", action="store_true", help="有头模式, 观察页面过程")
+    p.add_argument("--timeout", type=int, default=90, help="等待秒数(默认90)")
+
+    p = sub.add_parser("task", parents=[common], help="周期性任务安装/卸载/状态")
+    t = p.add_subparsers(dest="task_cmd")
+    q = t.add_parser("install", help="安装周期任务(Windows: schtasks; Linux: systemd/cron)")
+    q.add_argument("--method", default="auto", choices=("auto", "schtasks", "systemd", "cron"))
+    q.add_argument("--interval", type=int, default=60, help="间隔分钟(默认60, 最小10)")
+    q = t.add_parser("uninstall", help="卸载周期任务")
+    q.add_argument("--method", default="auto", choices=("auto", "schtasks", "systemd", "cron"))
+    t.add_parser("status", help="查看各形态安装状态与下次触发时间")
+
+    p = sub.add_parser("config", parents=[common], help="查看/修改配置")
+    c = p.add_subparsers(dest="config_cmd")
+    c.add_parser("show", help="打印生效配置(token 脱敏)")
+    q = c.add_parser("set", help="设置配置项")
+    q.add_argument("key", choices=("game_dir", "channel_order", "auto_bind",
+                                   "gift_index", "push_key"))
+    q.add_argument("value", help="新值(channel_order 逗号分隔; auto_bind true/false)")
+    q = c.add_parser("napcat-add", help="添加 NapCat OneBot HTTP 端点")
+    q.add_argument("url", help="如 http://127.0.0.1:3000")
+    q.add_argument("token", nargs="?", default="", help="OneBot access token(建议设置)")
+    c.add_parser("napcat-clear", help="清空 NapCat 端点列表")
+    return ap
+
+
+def cmd_run(args):
+    if args.index:
+        args.gift = 0
+    from wuxia_autoclaim import runner
+    return runner.run(args)
+
+
+def cmd_harvest(args):
+    data = config.load_roles()
+    if data is None:
+        log("[!] 未找到 %s, 请先跑 login(或从旧项目拷 roles.json, 见 README 迁移节)"
+            % config.roles_file())
+        return 2
+    cfg = config.load_config()
+    from wuxia_autoclaim.harvest import harvest_once
+    return 0 if harvest_once(data, cfg, order=config.channel_order(cfg, args.channel),
+                              bind_new=args.bind_new) else 1
+
+
+def cmd_status(args):
+    from wuxia_autoclaim import ams
+    from wuxia_autoclaim.util import cookie_header, calc_gtk, mask
+    cfg = config.load_config()
+    data = config.load_roles()
+    out = {"data_dir": str(config.data_dir()),
+           "roles_file": str(config.roles_file()), "roles": [], "channels": {}}
+
+    if data is None:
+        out["roles"] = None
+    else:
+        for r in data.get("roles", []):
+            name = r.get("name") or ("QQ%s" % r.get("uin", "?"))
+            jar = r.get("cookies", {})
+            item = {"name": name, "uin": mask(r.get("uin", "")), "area": r.get("area", "")}
+            if not jar.get("skey"):
+                item.update(ok=False, why="no skey")
+            elif not (r.get("area") and r.get("roleid")):
+                item.update(ok=False, why="missing area/roleid (跑 bind)")
+            else:
+                try:
+                    resp = ams.emit(cookie_header(jar), calc_gtk(jar["skey"]),
+                                    ams.FLOW_INIT, r.get("area", ""), r.get("roleid", ""))
+                    iret = ams.is_login_expired(resp)
+                    item["iRet"] = iret
+                    if iret == "0":
+                        week, signed, gifts, toget = ams.parse_init(resp)
+                        item.update(ok=True, week=week, signed=bool(signed), to_get=toget)
+                    else:
+                        item.update(ok=iret == "99998", why="iRet=%s" % iret)
+                except Exception as e:
+                    item.update(ok=False, why="接口异常: %s" % e)
+            out["roles"].append(item)
+
+    # 通道侧只读探测
+    eps = cfg.get("napcat") or []
+    if eps:
+        from wuxia_autoclaim.napcat import call, NapCatError
+        ch = []
+        for ep in eps:
+            try:
+                info = call(ep.get("url", ""), ep.get("token", ""), "get_login_info", timeout=5)
+                ch.append({"url": ep.get("url"), "ok": True,
+                           "uin": mask(info.get("user_id", "")), "nick": info.get("nickname", "")})
+            except NapCatError as e:
+                ch.append({"url": ep.get("url"), "ok": False, "error": str(e)})
+        out["channels"]["napcat"] = ch
+    try:
+        from wuxia_autoclaim.qqnt import QqntBridge
+        accs = QqntBridge().accounts()
+        out["channels"]["qqnt"] = [{"uin": mask(u), "nick": i["nick"], "port": i["port"]}
+                                   for u, i in accs.items()] or "无在线账号"
+    except Exception as e:
+        out["channels"]["qqnt"] = str(e)
+    from wuxia_autoclaim.gamecache import cache_dir
+    out["channels"]["game"] = str(cache_dir(cfg))
+
+    if args.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+    else:
+        log("数据目录: %s" % out["data_dir"])
+        if out["roles"] is None:
+            log("roles: 未初始化(先跑 login)")
+        else:
+            for item in out["roles"]:
+                if item.get("ok"):
+                    log("角色 %-12s QQ%s %s区  有效 已许愿=%s 待领奖=%s"
+                        % (item["name"], item["uin"], item.get("area", "?"),
+                           item.get("signed"), item.get("to_get")))
+                else:
+                    log("角色 %-12s QQ%s  失效(%s)" % (item["name"], item["uin"], item.get("why")))
+        for line in json.dumps(out["channels"], ensure_ascii=False, indent=2).splitlines():
+            print(line)
+    roles_ok = out["roles"] is not None and bool(out["roles"]) and \
+        all(i.get("ok") for i in out["roles"])
+    return 0 if roles_ok else 1
+
+
+def cmd_task(args):
+    from wuxia_autoclaim import taskinstall
+    if args.task_cmd == "install":
+        return 0 if taskinstall.install(args.method, args.interval) else 1
+    if args.task_cmd == "uninstall":
+        return 0 if taskinstall.uninstall(args.method) else 1
+    if args.task_cmd == "status":
+        return 0 if taskinstall.status() else 1
+    print("用法: wuxia-autoclaim task {install|uninstall|status}")
+    return 2
+
+
+def cmd_config(args):
+    cfg = config.load_config()
+    if args.config_cmd == "show":
+        shown = dict(cfg)
+        shown["napcat"] = [dict(ep, token=(ep.get("token", "")[:4] + "...") if ep.get("token") else "")
+                           for ep in cfg.get("napcat", [])]
+        log("数据目录: %s" % config.data_dir())
+        log("roles:     %s" % config.roles_file())
+        log("日志:      %s" % config.log_file())
+        print(json.dumps(shown, ensure_ascii=False, indent=2))
+        data = config.load_roles()
+        if data is not None:
+            print(json.dumps({"defaults": data.get("defaults", {}),
+                              "roles": ["%s (QQ%s %s区)" % (r.get("name", "?"), r.get("uin", "?"),
+                                                            r.get("area", "?"))
+                                        for r in data.get("roles", [])]},
+                             ensure_ascii=False, indent=2))
+        return 0
+    if args.config_cmd == "set":
+        v = args.value
+        if args.key == "auto_bind":
+            v = v.lower() in ("1", "true", "yes", "on")
+        elif args.key == "gift_index":
+            if not v.isdigit():
+                log("[!] gift_index 要是数字")
+                return 2
+            v = int(v)
+        elif args.key == "channel_order":
+            v = config.channel_order(cfg, v)
+            if not v:
+                log("[!] channel_order 至少要有一个合法通道(napcat/qqnt/game)")
+                return 2
+        if args.key in ("gift_index", "push_key"):       # 业务默认值落 roles.json
+            data = config.load_roles()
+            if data is None:
+                data = {"defaults": dict(config.DEFAULTS), "roles": []}
+            data.setdefault("defaults", {})[args.key] = v
+            config.save_roles(data)
+        else:
+            cfg[args.key] = v
+            config.save_config(cfg)
+        log("已设置 %s = %s" % (args.key, v))
+        return 0
+    if args.config_cmd == "napcat-add":
+        eps = cfg.setdefault("napcat", [])
+        eps[:] = [e for e in eps if e.get("url") != args.url]     # 同址覆盖
+        eps.append({"url": args.url, "token": args.token})
+        config.save_config(cfg)
+        log("已添加 napcat 端点 %s%s (共 %d 个)" % (args.url, "(带token)" if args.token else "", len(eps)))
+        return 0
+    if args.config_cmd == "napcat-clear":
+        cfg["napcat"] = []
+        config.save_config(cfg)
+        log("已清空 napcat 端点")
+        return 0
+    print("用法: wuxia-autoclaim config {show|set|napcat-add|napcat-clear}")
+    return 2
+
+
+def main(argv=None):
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    if not args.cmd:
+        ap.print_help()
+        sys.exit(2)
+    if args.data_dir:
+        config.set_data_dir(args.data_dir)
+    try:
+        config.init_data_dir()
+    except OSError as e:
+        print("[!] 数据目录不可写(%s): %s" % (config.data_dir(), e))
+        sys.exit(2)
+    setup(config.log_file(), quiet=args.quiet)
+
+    handlers = {"run": cmd_run, "harvest": cmd_harvest, "status": cmd_status,
+                "task": cmd_task, "config": cmd_config}
+    if args.cmd == "login":
+        from wuxia_autoclaim import login
+        code = login.cmd(args)
+    elif args.cmd == "bind":
+        from wuxia_autoclaim import bind
+        code = bind.cmd(args)
+    else:
+        code = handlers[args.cmd](args)
+    sys.exit(code)
+
+
+if __name__ == "__main__":
+    main()
