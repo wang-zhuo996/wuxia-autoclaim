@@ -1,6 +1,8 @@
-# 数据目录: 凭据/配置/日志都在里面, 绝不入库
-data/
+# 数据目录: 凭据(config.yaml/roles.json)与日志不入库; 模板和 .gitkeep 入库
+# (必须用 data/* 而不是 data/, 目录本身被忽略时反排除 ! 不生效)
+data/*
 !data/.gitkeep
+!data/config.example.yaml
 
 __pycache__/
 *.pyc

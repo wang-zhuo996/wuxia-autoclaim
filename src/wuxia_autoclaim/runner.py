@@ -34,11 +34,7 @@ def run(args):
             % config.roles_file())
         return 2
     cfg = config.load_config()
-    defaults = data.setdefault("defaults", {})
-    forced = config.apply_env(defaults)
-    if "gift_index" in forced:   # 环境变量强制的奖励序号对所有角色生效
-        for r in data.get("roles", []):
-            r["gift_index"] = defaults["gift_index"]
+    config.apply_env(cfg)        # 环境变量覆盖(强制序号时清空 gift_override, 对所有角色生效)
 
     roles = select_roles(data, getattr(args, "role", ""))
     if not roles:
@@ -61,7 +57,7 @@ def run(args):
         order = config.channel_order(cfg, getattr(args, "channel", ""))
         harvest_once(data, cfg, order=order, bind_new=args.bind_new, dead=dead)
 
-    results = [safe_run_role(r, defaults, claim_only=args.claim_only,
+    results = [safe_run_role(r, cfg, claim_only=args.claim_only,
                              gift_id=args.gift if args.gift else 0,
                              interactive=interactive)
                for r in roles]
@@ -75,7 +71,7 @@ def run(args):
         # 所有角色今天都已签过, 不再推送
         log("[run] 所有角色今日已完成, 无需重复")
         return 0 if ok_n == len(results) else 1
-    push_serverchan(defaults.get("push_key", ""),
+    push_serverchan(cfg.get("push_key", ""),
                     "[天刀签到] %d/%d 成功" % (ok_n, len(results)),
                     "\n\n---\n\n".join(m for _, m in results))
     return 0 if ok_n == len(results) else 1

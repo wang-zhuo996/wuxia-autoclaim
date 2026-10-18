@@ -176,7 +176,7 @@ def login_once(args):
         log("[!] 登录态里没有 skey, 说明没有真正登录成功, 请重试")
         return False
     uin = jar.get("uin", "").lstrip("o")
-    data = config.load_roles() or {"defaults": dict(config.DEFAULTS), "roles": []}
+    data = config.load_roles() or {"roles": []}
     config.upsert_role(data, area, roleid, playername, jar, uin)
     config.save_roles(data)
     gifts = fetch_gifts(jar, area, roleid)
@@ -185,9 +185,8 @@ def login_once(args):
 
 
 def print_result(data, uin, area, gifts):
-    defaults = data.get("defaults", {})
     roles = data.get("roles", [])
-    gift_idx = defaults.get("gift_index", 3)
+    gift_idx = config.gift_index_for(config.load_config(), uin)
     print("\n" + "=" * 66)
     print("[登录信息已保存] %s" % config.roles_file())
     print("=" * 66)
@@ -209,6 +208,7 @@ def print_result(data, uin, area, gifts):
     print("    wuxia-autoclaim task install  # 安装为周期任务(静默自动跑)")
     print("")
     print("[!] roles.json 是你的私人登录凭证, 不要发给任何人(data/ 已被 .gitignore 忽略)。")
+    print("[!] config.yaml 里若有 napcat token / push_key, 同样不要外发。")
 
 
 def cmd(args):

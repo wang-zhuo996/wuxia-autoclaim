@@ -12,7 +12,7 @@ license = {text = "MIT"}
 dependencies = []                    # 核心零依赖, 纯 stdlib(urllib/argparse/sqlite3/ssl)
 
 [project.optional-dependencies]
-browser = ["playwright>=1.40"]       # 仅 login/bind 需要
+browser = ["playwright>=1.40"]       # 仅 login(浏览器兜底)需要
 dev = ["pytest"]
 
 [project.scripts]

@@ -33,9 +33,14 @@ class NapCatError(RuntimeError):
 
 
 def call(url, token, action, params=None, timeout=10):
-    """调一个 OneBot HTTP action, 返回 data 字段(dict)"""
-    body = json.dumps({"action": action, "params": params or {}}).encode("utf-8")
-    req = urllib.request.Request(url, data=body, method="POST")
+    """调一个 OneBot HTTP action, 返回 data 字段(dict)
+
+    OneBot 11 HTTP 标准是按路径调 action: POST <url>/<action>, params 作 JSON body。
+    NapCat 4.x 对 "action 塞 body 打根路径" 只回 retcode=0 的空壳("NapCat4 Is Running"),
+    会让收割拿到空 data 静默空转 —— 实测 4.17.53 只认路径式, 别改回去。
+    """
+    body = json.dumps(params or {}).encode("utf-8")
+    req = urllib.request.Request(url.rstrip("/") + "/" + action, data=body, method="POST")
     req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", "Bearer %s" % token)
@@ -111,7 +116,10 @@ def harvest_napcat(data, cfg, bind_new=False, dead_uins=None):
         alive_eps += 1
         uin = str(info.get("user_id", ""))
         nick = info.get("nickname", "")
-        if not uin or uin in seen:
+        if not uin:
+            log("[napcat] %s get_login_info 返回空数据(端点在线但无会话?), 跳过" % url)
+            continue
+        if uin in seen:
             continue
         seen.add(uin)
         matched = [r for r in data.get("roles", []) if r.get("uin") == uin]
@@ -157,7 +165,8 @@ def harvest_napcat(data, cfg, bind_new=False, dead_uins=None):
 
 
 def _bind_new(url, token, uin, nick, data):
-    """收割到新 QQ 时尝试无头绑定角色(bind 模块延迟导入, 缺 playwright 时给指引)"""
+    """收割到新 QQ 时尝试补齐绑定(纯 HTTP, 处理活动中心已有绑定的号,
+    以及 config.yaml bind: 段写了 server/role 预设的号; 其余请在终端跑交互式 bind 选一次)"""
     try:
         ck = call(url, token, "get_clientkey").get("clientkey", "")
         if not ck:
@@ -166,6 +175,8 @@ def _bind_new(url, token, uin, nick, data):
     except (NapCatError, RuntimeError) as e:
         log("[napcat] 新账号 %s(%s) 拿凭据失败(%s), 不绑定" % (mask(uin), nick, e))
         return
-    from wuxia_autoclaim import bind           # 延迟导入(playwright 相关)
-    ok, msg = bind.bind_role(jar, uin, data=data)
-    log("[napcat] 新账号自动绑定: %s" % msg)
+    from wuxia_autoclaim import config, webbind   # 延迟导入
+    ok, msg = webbind.bind_role_http(jar, uin, data=data)
+    log("[napcat] 新账号自动补绑: %s" % msg)
+    if ok:
+        config.save_roles(data)     # 收割链路只认"凭据更新", 新号的绑定要自己落盘

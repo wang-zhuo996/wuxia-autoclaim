@@ -6,15 +6,18 @@
 import urllib.parse
 import urllib.request
 
+from wuxia_autoclaim import config
 from wuxia_autoclaim.ams import (emit, parse_init, is_login_expired,
                                  FLOW_INIT, FLOW_SIGN, FLOW_GET)
 from wuxia_autoclaim.util import cookie_header, calc_gtk, mask
 
 
-def run_role(role, defaults, interactive=False, gift_id=0, claim_only=False):
+def run_role(role, cfg, interactive=False, gift_id=0, claim_only=False):
     """对单个角色执行签到主流程, 返回 (ok, 消息)
 
-    gift_id: 直接指定奖励的 giftId, 0 表示按 gift_index/interactive 选择
+    cfg 为 config.load_config() 的结果; 奖励序号取值:
+    role["gift_index"](run 的 --index 注入, 最优先) > cfg 的 gift_override[uin] > gift_index
+    gift_id: 直接指定奖励的 giftId, 0 表示按上述序号/interactive 选择
     claim_only: 只领奖, 不做今天的许愿
     """
     name = role.get("name") or ("QQ%s" % role.get("uin", "?"))
@@ -25,7 +28,7 @@ def run_role(role, defaults, interactive=False, gift_id=0, claim_only=False):
     if not skey:
         return False, "[%s] 缺少 skey 登录态, 请跑 harvest 收割或 login 重新登录" % name
     if not area or not roleid:
-        return False, "[%s] 缺少 area/roleid, 请跑 bind 自动绑定或 login 重新登录" % name
+        return False, "[%s] 缺少 area/roleid, 请在终端跑 bind 交互绑定(或 login 浏览器登录)" % name
 
     cookie, gtk = cookie_header(jar), calc_gtk(skey)
     try:
@@ -36,9 +39,9 @@ def run_role(role, defaults, interactive=False, gift_id=0, claim_only=False):
     if iret == "101":
         return False, "[%s] 登录态已失效(iRet=101), 请保持 NapCat/QQ 在线跑 harvest, 或重新 login" % name
     if iret == "99998":
-        return False, "[%s] 账号未绑定大区(iRet=99998), 请用浏览器打开活动中心登录一次完成绑定" % name
+        return False, "[%s] 账号未绑定大区(iRet=99998), 请跑 bind 交互完成绑定(无需浏览器)" % name
 
-    gift_index = role.get("gift_index", defaults.get("gift_index", 3))
+    gift_index = role.get("gift_index") or config.gift_index_for(cfg, uin)
     week, signed, gifts, toget = parse_init(resp)
     day = "一二三四五六日"[week - 1]
     lines = ["[%s] QQ=%s 大区=%s 角色=%s" % (name, mask(uin), area, mask(roleid, 4, 4)),
@@ -88,10 +91,10 @@ def run_role(role, defaults, interactive=False, gift_id=0, claim_only=False):
     return False, "\n".join(lines)
 
 
-def safe_run_role(role, defaults, **kw):
+def safe_run_role(role, cfg, **kw):
     """包装 run_role(), 把异常转成友好提示, 避免直接抛堆栈"""
     try:
-        return run_role(role, defaults, **kw)
+        return run_role(role, cfg, **kw)
     except Exception as e:
         return False, "[%s] 运行异常: %s" % (role.get("name") or "?", e)
 

@@ -44,3 +44,14 @@ def log(msg):
             f.write(line + "\n")
     except OSError:
         pass
+
+
+def echo(text):
+    """GBK 控制台安全 print(降级策略与 log 一致, 供不带时间戳的原样输出用)"""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        enc = sys.stdout.encoding or "gbk"
+        print(text.encode(enc, errors="replace").decode(enc))
+    except Exception:
+        pass

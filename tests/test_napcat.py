@@ -50,9 +50,13 @@ def test_call_sends_auth_and_body(monkeypatch):
 
     monkeypatch.setattr(napcat.urllib.request, "urlopen", fake)
     call("http://127.0.0.1:3000", "secret", "get_clientkey")
-    assert seen["url"] == "http://127.0.0.1:3000"
+    # OneBot 11 路径式: action 在 URL 路径, body 只装 params
+    assert seen["url"] == "http://127.0.0.1:3000/get_clientkey"
     assert seen["auth"] == "Bearer secret"
-    assert seen["body"] == {"action": "get_clientkey", "params": {}}
+    assert seen["body"] == {}
+    call("http://x/", "secret", "get_clientkey", {"domain": "qq.com"})
+    assert seen["url"] == "http://x/get_clientkey"      # 尾斜杠不产生 //
+    assert seen["body"] == {"domain": "qq.com"}
 
 
 def test_call_errors(monkeypatch):
@@ -83,3 +87,12 @@ def test_call_errors(monkeypatch):
 def test_harvest_no_endpoints(capsys):
     # 无端点配置: 记日志并返回 (0,0), 不抛
     assert napcat.harvest_napcat({"roles": []}, {}) == (0, 0)
+
+
+def test_harvest_empty_login_info_logged(monkeypatch, capsys):
+    # 端点在线但 get_login_info 回空 data(NapCat 4.x 对旧式调用就是这样):
+    # 必须留日志, 不能静默空转
+    monkeypatch.setattr(napcat, "call", lambda *a, **k: {})
+    cfg = {"napcat": [{"url": "http://127.0.0.1:3000", "token": "t"}]}
+    assert napcat.harvest_napcat({"roles": []}, cfg) == (0, 0)
+    assert "返回空数据" in capsys.readouterr().out

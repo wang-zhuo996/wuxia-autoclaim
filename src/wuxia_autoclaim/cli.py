@@ -5,11 +5,12 @@
 日志恒写 <data>/autoclaim.log, --quiet 只影响控制台输出(pythonw/cron 下也安全)。
 """
 import argparse
+import copy
 import json
 import sys
 
 from wuxia_autoclaim import __version__, config
-from wuxia_autoclaim.log import log, setup
+from wuxia_autoclaim.log import echo, log, setup
 
 
 def build_parser():
@@ -38,11 +39,13 @@ def build_parser():
     p.add_argument("--no-harvest", action="store_true", help="跳过凭据收割, 只用手头 cookie")
     p.add_argument("--no-push", action="store_true", help="本次禁用 Server酱推送")
     p.add_argument("--channel", default="", help="临时覆盖通道顺序(逗号分隔: napcat,qqnt,game)")
-    p.add_argument("--bind-new", action="store_true", help="收割到新 QQ 时尝试无头绑定角色")
+    p.add_argument("--bind-new", action="store_true",
+                   help="收割到新 QQ 时自动补齐绑定(活动中心已有绑定或 config.yaml bind 预设的号)")
 
     p = sub.add_parser("harvest", parents=[common], help="只做凭据体检+收割, 不许愿")
     p.add_argument("--channel", default="", help="临时覆盖通道顺序")
-    p.add_argument("--bind-new", action="store_true", help="收割到新 QQ 时尝试无头绑定角色")
+    p.add_argument("--bind-new", action="store_true",
+                   help="收割到新 QQ 时自动补齐绑定(活动中心已有绑定或 config.yaml bind 预设的号)")
 
     p = sub.add_parser("gift", parents=[common], help="查看本周许愿物品并选择(序号持久化到角色)")
     p.add_argument("--role", default="", help="只处理指定角色: 序号/名称/QQ号")
@@ -51,15 +54,16 @@ def build_parser():
     p = sub.add_parser("status", parents=[common], help="只读体检: 角色/凭据/通道状态")
     p.add_argument("--json", action="store_true", help="以 JSON 输出(便于脚本)")
 
-    p = sub.add_parser("login", parents=[common], help="浏览器交互登录, 绑定角色(需 browser extra)")
+    p = sub.add_parser("login", parents=[common],
+                       help="浏览器交互登录, 绑定角色(兜底用, 需 browser extra)")
     p.add_argument("--qr", action="store_true", help="扫码登录(仅限已成功登录过的情况)")
-    p.add_argument("--headed", action="store_true", help="网页登录(默认, 推荐)")
+    p.add_argument("--headed", action="store_true", help="网页登录(默认)")
     p.add_argument("--timeout", type=int, default=300, help="等待登录的秒数(默认300)")
 
-    p = sub.add_parser("bind", parents=[common], help="无头绑定: 自动发现缺失的 area/roleid(需 browser extra)")
-    p.add_argument("--uin", default="", help="只处理该 QQ 号(缺省=所有缺绑定信息的)")
-    p.add_argument("--headed", action="store_true", help="有头模式, 观察页面过程")
-    p.add_argument("--timeout", type=int, default=90, help="等待秒数(默认90)")
+    p = sub.add_parser("bind", parents=[common],
+                       help="绑定大区/角色(纯 HTTP, 首选; 需 NapCat 或 QQ 客户端在线; "
+                            "config.yaml bind 预设的号免交互直绑)")
+    p.add_argument("--uin", default="", help="只处理该 QQ 号(缺省=缺绑定的角色+通道在线的新账号)")
 
     p = sub.add_parser("task", parents=[common], help="周期性任务安装/卸载/状态")
     t = p.add_subparsers(dest="task_cmd")
@@ -94,7 +98,7 @@ def cmd_run(args):
 def cmd_harvest(args):
     data = config.load_roles()
     if data is None:
-        log("[!] 未找到 %s, 请先跑 login(或从旧项目拷 roles.json, 见 README 迁移节)"
+        log("[!] 未找到 %s, 请先跑 bind 绑定角色(或 login/从旧项目拷 roles.json, 见 README)"
             % config.roles_file())
         return 2
     cfg = config.load_config()
@@ -161,7 +165,7 @@ def cmd_status(args):
     out["channels"]["game"] = str(cache_dir(cfg))
 
     if args.json:
-        print(json.dumps(out, ensure_ascii=False, indent=2))
+        echo(json.dumps(out, ensure_ascii=False, indent=2))
     else:
         log("数据目录: %s" % out["data_dir"])
         if out["roles"] is None:
@@ -175,7 +179,7 @@ def cmd_status(args):
                 else:
                     log("角色 %-12s QQ%s  失效(%s)" % (item["name"], item["uin"], item.get("why")))
         for line in json.dumps(out["channels"], ensure_ascii=False, indent=2).splitlines():
-            print(line)
+            echo(line)
     roles_ok = out["roles"] is not None and bool(out["roles"]) and \
         all(i.get("ok") for i in out["roles"])
     return 0 if roles_ok else 1
@@ -190,8 +194,8 @@ def cmd_gift(args):
     if data is None:
         log("[!] 未找到 %s, 请先跑 login 或 harvest" % config.roles_file())
         return 2
-    defaults = data.setdefault("defaults", {})
-    config.apply_env(defaults)
+    cfg = config.load_config()
+    config.apply_env(cfg)
     roles = select_roles(data, args.role)
     if not roles:
         log("[gift] roles.json 里没有角色, 退出")
@@ -218,14 +222,14 @@ def cmd_gift(args):
             bad += 1
             continue
         week, signed, gifts, toget = ams.parse_init(resp)
-        cur = r.get("gift_index", defaults.get("gift_index", 3))
+        cur = config.gift_index_for(cfg, r.get("uin"))
 
         if args.index:
             if not (1 <= args.index <= len(gifts)):
                 log("[gift] %s 序号 %d 超出范围(1-%d)" % (name, args.index, len(gifts)))
                 bad += 1
                 continue
-            r["gift_index"] = args.index
+            cfg.setdefault("gift_override", {})[str(r.get("uin", ""))] = args.index
             changed += 1
             log("[gift] %s 奖励序号 -> %d (%s)" % (name, args.index, gifts[args.index - 1]["name"]))
             continue
@@ -242,15 +246,15 @@ def cmd_gift(args):
             if not s:
                 break
             if s.isdigit() and 1 <= int(s) <= len(gifts):
-                r["gift_index"] = int(s)
+                cfg.setdefault("gift_override", {})[str(r.get("uin", ""))] = int(s)
                 changed += 1
                 log("[gift] %s 奖励序号 -> %s (%s)" % (name, s, gifts[int(s) - 1]["name"]))
                 break
             print("    输入无效, 请重新输入")
 
     if changed:
-        config.save_roles(data)
-        log("已回写 %s" % config.roles_file())
+        config.save_config(cfg)
+        log("已回写 %s" % config.config_file())
     return 0 if not bad else 1
 
 
@@ -269,18 +273,19 @@ def cmd_task(args):
 def cmd_config(args):
     cfg = config.load_config()
     if args.config_cmd == "show":
-        shown = dict(cfg)
-        shown["napcat"] = [dict(ep, token=(ep.get("token", "")[:4] + "...") if ep.get("token") else "")
-                           for ep in cfg.get("napcat", [])]
+        shown = copy.deepcopy(cfg)                 # token 脱敏后按 yaml 形态打印
+        for ep in shown.get("napcat", []):
+            if ep.get("token"):
+                ep["token"] = ep["token"][:4] + "..."
         log("数据目录: %s" % config.data_dir())
+        log("配置文件: %s" % config.config_file())
         log("roles:     %s" % config.roles_file())
         log("日志:      %s" % config.log_file())
-        print(json.dumps(shown, ensure_ascii=False, indent=2))
+        print(config.dump_config(shown), end="")
         data = config.load_roles()
         if data is not None:
-            print(json.dumps({"defaults": data.get("defaults", {}),
-                              "roles": ["%s (QQ%s %s区)" % (r.get("name", "?"), r.get("uin", "?"),
-                                                            r.get("area", "?"))
+            print(json.dumps({"roles": ["%s (QQ%s %s区)" % (r.get("name", "?"), r.get("uin", "?"),
+                                                          r.get("area", "?"))
                                         for r in data.get("roles", [])]},
                              ensure_ascii=False, indent=2))
         return 0
@@ -295,19 +300,9 @@ def cmd_config(args):
             v = int(v)
         elif args.key == "channel_order":
             v = config.channel_order(cfg, v)
-            if not v:
-                log("[!] channel_order 至少要有一个合法通道(napcat/qqnt/game)")
-                return 2
-        if args.key in ("gift_index", "push_key"):       # 业务默认值落 roles.json
-            data = config.load_roles()
-            if data is None:
-                data = {"defaults": dict(config.DEFAULTS), "roles": []}
-            data.setdefault("defaults", {})[args.key] = v
-            config.save_roles(data)
-        else:
-            cfg[args.key] = v
-            config.save_config(cfg)
-        log("已设置 %s = %s" % (args.key, v))
+        cfg[args.key] = v
+        config.save_config(cfg)
+        log("已设置 %s = %s (回写 %s)" % (args.key, v, config.config_file()))
         return 0
     if args.config_cmd == "napcat-add":
         eps = cfg.setdefault("napcat", [])
@@ -342,14 +337,18 @@ def main(argv=None):
 
     handlers = {"run": cmd_run, "harvest": cmd_harvest, "gift": cmd_gift,
                 "status": cmd_status, "task": cmd_task, "config": cmd_config}
-    if args.cmd == "login":
-        from wuxia_autoclaim import login
-        code = login.cmd(args)
-    elif args.cmd == "bind":
-        from wuxia_autoclaim import bind
-        code = bind.cmd(args)
-    else:
-        code = handlers[args.cmd](args)
+    try:
+        if args.cmd == "login":
+            from wuxia_autoclaim import login
+            code = login.cmd(args)
+        elif args.cmd == "bind":
+            from wuxia_autoclaim import webbind
+            code = webbind.cmd(args)
+        else:
+            code = handlers[args.cmd](args)
+    except config.ConfigError as e:     # 配置/数据文件损坏: 干净报错而非裸堆栈
+        log("[!] %s" % e)
+        code = 2
     sys.exit(code)
 
 
