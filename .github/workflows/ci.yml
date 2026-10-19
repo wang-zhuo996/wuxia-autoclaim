@@ -1,0 +1,73 @@
+# CI: 测试(pytest 矩阵) -> 构建/发布多架构镜像到 GHCR
+#
+# 触发: push 到 main(发 latest+sha)、打 v* 标签(发版本号, 如 v0.1.0 -> 0.1.0)、PR(只测试+试构建不推送)
+# 首次发布后镜像默认私有, 需在 GitHub -> Packages -> wuxia-autoclaim -> Settings 改 public 才能匿名 pull
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:                        # requires-python >=3.9, 容器跑 3.12
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: 安装测试依赖
+        run: pip install pytest
+      - name: 运行测试
+        run: python -m pytest -v
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write                # 推 GHCR 用内置 GITHUB_TOKEN, 无需额外 PAT
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64(QEMU 模拟) + amd64: NAS/树莓派也能直接跑
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}          # v0.1.0 -> 0.1.0
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short                    # main 每次 push -> sha-xxxxxxx
+
+      - name: 构建并发布
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}   # PR 只试构建不推送
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

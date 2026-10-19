@@ -10,7 +10,9 @@ from wuxia_autoclaim import config
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path, monkeypatch):
     """每个用例独立数据目录, 用后还原"""
-    for k in ("WUXIA_DATA_DIR", "WUXIA_GAME_DIR", "WUXIA_GIFT_INDEX", "WUXIA_PUSH_KEY"):
+    for k in ("WUXIA_DATA_DIR", "WUXIA_GAME_DIR", "WUXIA_GIFT_INDEX", "WUXIA_PUSH_KEY",
+              "WUXIA_NAPCAT_URL", "WUXIA_NAPCAT_TOKEN", "WUXIA_CHANNEL_ORDER",
+              "WUXIA_AUTO_BIND", "WUXIA_BIND"):
         monkeypatch.delenv(k, raising=False)
     config.set_data_dir(tmp_path)
     yield tmp_path
@@ -338,3 +340,130 @@ def test_load_bindmap_from_config():
 def test_bindmap_bad_raises(text, why):
     with pytest.raises(config.ConfigError):
         config.parse_bindmap(text)
+
+
+# ---------------------------------------------------------------- 环境变量落盘(from-env)
+
+def test_parse_bindmap_json():
+    assert config.parse_bindmap_json(
+        json.dumps({"100": {"server": u"凤凰集", "role": u"测试一"},
+                    "200": {"server": u"长生剑", "role": u"测试二"}})) == {
+        "100": {"server": u"凤凰集", "role": u"测试一"},
+        "200": {"server": u"长生剑", "role": u"测试二"}}
+    assert config.parse_bindmap_json("{}") == {}
+
+
+@pytest.mark.parametrize("text, why", [
+    ("{bad json", "不是 JSON"),
+    ('["a"]', "顶层不是对象"),
+    ('{"abc": {"server": "a", "role": "b"}}', "键不是 QQ 号"),
+    ('{"100": {"server": "a"}}', "缺 role"),
+])
+def test_parse_bindmap_json_bad(text, why):
+    with pytest.raises(config.ConfigError):
+        config.parse_bindmap_json(text)
+
+
+def test_materialize_env_full(monkeypatch):
+    """非空变量逐键落盘, 回读一致"""
+    monkeypatch.setenv("WUXIA_NAPCAT_URL", "http://10.0.0.2:3000, http://10.0.0.3:3000")
+    monkeypatch.setenv("WUXIA_NAPCAT_TOKEN", "t1,t2")
+    monkeypatch.setenv("WUXIA_CHANNEL_ORDER", "napcat")
+    monkeypatch.setenv("WUXIA_AUTO_BIND", "true")
+    monkeypatch.setenv("WUXIA_GIFT_INDEX", "5")
+    monkeypatch.setenv("WUXIA_PUSH_KEY", "SCTenv")
+    monkeypatch.setenv("WUXIA_BIND",
+                       json.dumps({"100": {"server": u"凤凰集", "role": u"测试一"}}))
+    wrote, warns = config.materialize_env()
+    assert warns == []
+    assert set(wrote) == {"napcat", "channel_order", "auto_bind",
+                          "gift_index", "push_key", "bind"}
+    back = config.load_config()                          # 落盘后回读一致
+    assert back["napcat"] == [{"url": "http://10.0.0.2:3000", "token": "t1"},
+                              {"url": "http://10.0.0.3:3000", "token": "t2"}]
+    assert back["channel_order"] == ["napcat"]
+    assert back["auto_bind"] is True
+    assert back["gift_index"] == 5
+    assert back["push_key"] == "SCTenv"
+    assert back["bind"] == {"100": {"server": u"凤凰集", "role": u"测试一"}}
+
+
+def test_materialize_env_token_alignment(monkeypatch):
+    """token 恰一段时对多端点复用; 缺位为空"""
+    monkeypatch.setenv("WUXIA_NAPCAT_URL", "http://a:3000,http://b:3000,http://c:3000")
+    monkeypatch.setenv("WUXIA_NAPCAT_TOKEN", "only")
+    wrote, _ = config.materialize_env()
+    assert wrote == ["napcat"]
+    eps = config.load_config()["napcat"]
+    assert [e["token"] for e in eps] == ["only"] * 3
+    monkeypatch.setenv("WUXIA_NAPCAT_TOKEN", "t1")
+    monkeypatch.setenv("WUXIA_NAPCAT_URL", "http://a:3000,http://b:3000")
+    monkeypatch.setenv("WUXIA_NAPCAT_TOKEN", "t1,t2,t3")
+    config.materialize_env()                             # URL 两段, token 三段: 多余忽略
+    assert config.load_config()["napcat"] == [
+        {"url": "http://a:3000", "token": "t1"},
+        {"url": "http://b:3000", "token": "t2"}]
+
+
+def test_materialize_env_preserves_unset_keys(monkeypatch):
+    """变量未设置/为空时不动文件里已有的值"""
+    cfg = config.load_config()
+    cfg["push_key"] = "SCTfile"
+    cfg["gift_index"] = 2
+    cfg["bind"] = {"100": {"server": u"凤凰集", "role": u"一"}}
+    config.save_config(cfg)
+    monkeypatch.setenv("WUXIA_AUTO_BIND", "1")
+    monkeypatch.setenv("WUXIA_PUSH_KEY", "")             # 空串=不接管
+    wrote, warns = config.materialize_env()
+    assert wrote == ["auto_bind"] and warns == []
+    back = config.load_config()
+    assert back["auto_bind"] is True
+    assert back["push_key"] == "SCTfile"                 # 未被空串清掉
+    assert back["gift_index"] == 2 and back["bind"]["100"]["server"] == u"凤凰集"
+
+
+def test_materialize_env_replaces_whole_keys(monkeypatch):
+    """写则以变量为准: bind 整段替换, napcat 列表不再叠加旧端点"""
+    config.save_config({"napcat": [{"url": "http://old:3000", "token": "x"}],
+                        "bind": {"100": {"server": u"旧服", "role": u"旧角色"}}})
+    monkeypatch.setenv("WUXIA_NAPCAT_URL", "http://new:3000")
+    monkeypatch.setenv("WUXIA_BIND",
+                       json.dumps({"200": {"server": u"新服", "role": u"新角色"}}))
+    config.materialize_env()
+    back = config.load_config()
+    assert back["napcat"] == [{"url": "http://new:3000", "token": ""}]
+    assert back["bind"] == {"200": {"server": u"新服", "role": u"新角色"}}
+
+
+def test_materialize_env_bad_values_only_warn(monkeypatch):
+    """单变量值不合法只记告警, 不写该键也不影响其余变量"""
+    monkeypatch.setenv("WUXIA_GIFT_INDEX", "abc")
+    monkeypatch.setenv("WUXIA_BIND", "{bad json")
+    monkeypatch.setenv("WUXIA_PUSH_KEY", "SCTok")
+    wrote, warns = config.materialize_env()
+    assert wrote == ["push_key"]
+    assert len(warns) == 2 and any("WUXIA_GIFT_INDEX" in w for w in warns) \
+        and any("WUXIA_BIND" in w for w in warns)
+    back = config.load_config()
+    assert back["gift_index"] == 3 and back["bind"] == {} and back["push_key"] == "SCTok"
+
+
+def test_materialize_env_noop():
+    """没有任何变量: 不写盘(config.yaml 不出现)"""
+    wrote, warns = config.materialize_env()
+    assert wrote == [] and warns == []
+    assert not (config.data_dir() / "config.yaml").exists()
+
+
+def test_materialize_env_container_localhost_hint(monkeypatch):
+    """容器内 127.0.0.1/localhost 端点: 照写不拦, 但提示改用 host.docker.internal"""
+    monkeypatch.setattr(config, "_in_container", lambda: True)
+    monkeypatch.setenv("WUXIA_NAPCAT_URL", "http://127.0.0.1:3000,http://localhost:3001")
+    wrote, warns = config.materialize_env()
+    assert wrote == ["napcat"]
+    assert len(warns) == 1 and "host.docker.internal" in warns[0]
+    assert len(config.load_config()["napcat"]) == 2       # 值原样落盘, 不代改
+    # 非容器环境(默认)或非本机地址: 不提示
+    monkeypatch.setattr(config, "_in_container", lambda: False)
+    _, warns = config.materialize_env()
+    assert warns == []

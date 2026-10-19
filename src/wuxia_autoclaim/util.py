@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """纯函数工具: cookie 挑选/签名/脱敏 (自 wuxia-autosign autosign.py 移植)"""
+import os
 from pathlib import Path
 
 # 发给 AMS 的 cookie, 按此顺序拼接: uin/skey 是鉴权核心,
@@ -42,10 +43,13 @@ def mask(s, head=3, tail=2):
 
 
 def secure_write(path, text):
-    """UTF-8 写文件; POSIX 下顺手收紧权限到 600(凭据文件用)"""
+    """UTF-8 原子写文件(同目录 tmp 落好再替换, 进程被杀也不会留半截);
+    POSIX 下顺手收紧权限到 600(凭据文件用)"""
     p = Path(path)
-    p.write_text(text, "utf-8")
+    tmp = p.with_name("%s.%d.tmp" % (p.name, os.getpid()))
+    tmp.write_text(text, "utf-8")
     try:
-        p.chmod(0o600)
+        tmp.chmod(0o600)
     except OSError:
         pass                   # Windows 无 POSIX 权限, 忽略
+    os.replace(str(tmp), str(p))

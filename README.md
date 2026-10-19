@@ -9,7 +9,7 @@
 |---|---|---|
 | 签到执行 | GitHub Actions 云端 | **本地**(schtasks/systemd/cron) |
 | 凭据来源 | 游戏缓存 + QQNT 桥 | **NapCat** + QQNT 桥 + 游戏缓存 |
-| 服务器部署 | 不支持 | 支持(NapCat 通道无需本地桥/浏览器) |
+| 服务器部署 | 不支持 | 支持(NapCat 通道无需本地桥/浏览器; Docker/compose 一键部署) |
 | 依赖 | PAT + PyNaCl(同步 GitHub) | **核心零依赖**(纯标准库) |
 
 ## 工作原理
@@ -33,7 +33,7 @@ SSO 通道完全一致,NapCat 只是换了一个 clientkey 来源 —— 因此 
 
 | 形态 | 适合 | 用法 |
 |---|---|---|
-| A. Linux 服务器 + NapCat | 7x24 无人值守(推荐) | 服务器跑 NapCat 保持 QQ 在线, 本工具同机 systemd/cron 周期执行 |
+| A. Linux 服务器 + NapCat | 7x24 无人值守(推荐) | 服务器跑 NapCat 保持 QQ 在线, 本工具同机 systemd/cron 周期执行; 或 Docker Compose 两个容器同编排(见「Docker 部署」) |
 | B. 本机 Windows | 日常开机使用 | NapCat 或官方 QQ 在线即可(双保险), schtasks 周期执行 |
 | C. 还没部署 NapCat | 先跑起来 | 开着官方 QQ 桌面客户端跑 `bind` 交互绑定起步, 之后随时加 NapCat |
 
@@ -133,7 +133,7 @@ Linux:    cp wuxia-autosign/src/wuxia_autosign/roles.json    wuxia-autoclaim/dat
 | `login` | 浏览器交互登录绑定角色(兜底, 需 browser extra)。`--qr`(扫码) `--headed`(网页) `--timeout` |
 | `bind` | 绑定大区/角色: 纯 HTTP 交互, 需 NapCat 或 QQ 客户端在线(首选)。config.yaml bind 预设的号免交互直绑(只查目标服务器); 其余全服扫描列出账号所有角色供选择; 已绑定的号直接补写, 合服后失效的旧绑定会引导重选。`--uin`; 无终端时只补齐已有绑定和 bind 预设 |
 | `task install/uninstall/status` | 周期任务管理。`--method auto/schtasks/systemd/cron` `--interval N`(分钟, 默认 60, 最小 10) |
-| `config show/set/napcat-add/napcat-clear` | 配置管理(`game_dir` `channel_order` `auto_bind` `gift_index` `push_key`) |
+| `config show/set/napcat-add/napcat-clear/from-env` | 配置管理(`game_dir` `channel_order` `auto_bind` `gift_index` `push_key` `bind`; `from-env` 把 WUXIA_* 环境变量写入 config.yaml, 容器入口自动执行) |
 
 全局: `--data-dir`(数据目录) `--quiet`(只写日志不刷屏), 放在子命令前后均可。
 退出码: 0=成功/无事可做, 1=有角色失败, 2=致命(数据文件缺失/依赖缺失等)。
@@ -182,8 +182,63 @@ bind:                         # 自动绑定预设 QQ号 -> 服务器/角色名(
 只查目标服务器直接提交, 不做全服扫描、无需交互; 未绑定的号、合服失效的号都能自动补齐;
 **预设与现有有效绑定的角色不同时, 以预设为准自动重绑**(改预设即可换绑角色)。
 
-**环境变量**: `WUXIA_DATA_DIR` / `WUXIA_GAME_DIR` / `WUXIA_GIFT_INDEX` / `WUXIA_PUSH_KEY`
-(优先级最高; `WUXIA_GIFT_INDEX` 生效时压过 gift_override, 对所有角色生效)。
+**环境变量**:
+
+- 运行时覆盖(优先级最高): `WUXIA_DATA_DIR` / `WUXIA_GAME_DIR` / `WUXIA_GIFT_INDEX` /
+  `WUXIA_PUSH_KEY`; `WUXIA_GIFT_INDEX` 生效时压过 gift_override, 对所有角色生效
+- 落盘写入: `config from-env` 把 `WUXIA_NAPCAT_URL` / `WUXIA_NAPCAT_TOKEN` /
+  `WUXIA_CHANNEL_ORDER` / `WUXIA_AUTO_BIND` / `WUXIA_BIND` / `WUXIA_GIFT_INDEX` /
+  `WUXIA_PUSH_KEY` 的当前值写进 config.yaml(变量非空才写; 容器入口自动执行,
+  见「Docker 部署」)
+
+## Docker 部署
+
+镜像内置周期循环(等价宿主机的 `task install`), 全部配置可用 compose 环境变量填入:
+容器**每次启动**把非空的 `WUXIA_*` 变量写入 `/data/config.yaml`(即 `config from-env`,
+变量非空才写、写则以变量为准, 未设置的变量沿用文件里已有的值)。
+
+```bash
+# 1. 按需编辑 docker-compose.yml 的 environment(至少 NapCat 地址 + token)
+docker compose up -d --build
+docker compose logs -f                     # 看首轮执行
+
+# 2. 一次性命令(交互式的要加 -it; 脚本里加 -T)
+docker compose run --rm wuxia status       # 体检角色/通道
+docker compose run --rm wuxia gift         # 选许愿物品
+docker compose run --rm wuxia config show  # 看落盘后的生效配置
+```
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `WUXIA_NAPCAT_URL` | NapCat OneBot HTTP 端点, 逗号分隔多个 | 不设(用 config.yaml) |
+| `WUXIA_NAPCAT_TOKEN` | 与 URL 逗号对齐; 恰一段时对所有端点复用 | 空 |
+| `WUXIA_CHANNEL_ORDER` | 通道顺序(容器内没有 QQ 客户端, 一般 `napcat`) | `napcat,qqnt` |
+| `WUXIA_AUTO_BIND` | `1/true/yes/on`; 设 `false` 可显式关掉文件里的 true | 不设 |
+| `WUXIA_BIND` | 绑定预设 JSON `{"QQ号": {"server": .., "role": ..}}`, 整体替换 bind 段 | 不设 |
+| `WUXIA_GIFT_INDEX` | 默认许愿奖励序号(设了会压过按角色选择) | 不设 |
+| `WUXIA_PUSH_KEY` | Server酱 SendKey | 不设 |
+| `WUXIA_INTERVAL` | 循环周期(分钟), 最小 10 | 60 |
+| `TZ` | 时区(仅影响日志时间戳, 业务周几来自服务端) | `Asia/Shanghai` |
+
+- **NapCat 地址怎么填**(容器里的 `127.0.0.1` 指容器自己, 连不到宿主机):
+  NapCat 在宿主机上用 `http://host.docker.internal:3000`(compose 已配
+  `extra_hosts: host-gateway`, Linux 的 Docker 20.10+ 同样适用; 纯 `docker run` 加
+  `--add-host=host.docker.internal:host-gateway`), 此时 NapCat 的 HTTP 服务须监听
+  `0.0.0.0`(见「NapCat 部署」节, 只绑 `127.0.0.1` 则容器够不着)并注意防火墙放行
+  Docker 网段; NapCat 是 compose 里的侧车容器则用 `http://napcat:3000`;
+  跨机器直接内网地址。误填 `127.0.0.1`/`localhost` 时容器启动日志会给出提示
+
+- **零配置起步**: 首次启动自动生成带注释的 `data/config.yaml` 模板与空 `data/roles.json`;
+  角色表为空时循环自动改跑 `harvest --bind-new` —— 配好 `WUXIA_BIND` 预设 + NapCat 端点,
+  `docker compose up -d` 即全自动纳新, 无需进容器操作
+- 从 compose 里删掉某个变量**不会**清除已写入的值: 清端点
+  `docker compose run --rm wuxia config napcat-clear`, 清预设
+  `docker compose run --rm wuxia config set bind {}`
+- `WUXIA_BIND` 的 JSON 在 compose 里用**单引号**包(内部双引号免转义); 值里出现 `$` 要写
+  `$$`; 含密钥的值建议改用 `env_file: .env`(compose 文件里有注释示例)
+- 构建离线可复现(纯标准库, `PYTHONPATH` 直跑不经 pip); 容器只做出站 HTTP、不监听端口;
+  凭据/配置/日志全在挂载的 `./data`; `docker stop` 秒级退出不伤 roles.json
+- Linux 想以非 root 跑: 宿主机 `chown` 好 `./data` 后启用 compose 里的 `user:` 行
 
 ## 定时任务细节
 

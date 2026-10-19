@@ -1,0 +1,5 @@
+# 容器脚本必须保持 LF(进镜像后 CRLF 会让 sh 报错); 其余跟随各平台默认
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf

@@ -10,6 +10,7 @@
 
 所有需要人工配置的选项都在 config.yaml(napcat 端点/通道顺序/奖励序号/推送/绑定预设),
 由手写的 mini-YAML 子集解析器读写(项目核心零依赖, 不引 PyYAML)。
+容器/compose 部署: 入口跑 `config from-env` 把 WUXIA_* 环境变量写进本文件(见 materialize_env)。
 roles.json 只存机器状态(schema 同旧项目 wuxia-autosign, 直接拷入即迁移):
     {"roles": [{"name", "uin", "area", "roleid", "cookies": {...}}]}
 旧版三处配置(config.json / roles.json 的 defaults 与每角色 gift_index / bind.yaml)
@@ -282,6 +283,20 @@ def parse_bindmap(text):
     return _validate_bindmap(top)
 
 
+def parse_bindmap_json(text):
+    """解析 JSON 形状的 bind 预设(WUXIA_BIND 环境变量 / config set bind 用)。
+
+    形状: {"QQ号": {"server": "...", "role": "..."}}; 坏值抛 ConfigError。
+    """
+    try:
+        obj = json.loads(text)
+    except ValueError as e:
+        raise ConfigError("bind 预设不是合法 JSON(%s)" % e)
+    if not isinstance(obj, dict):
+        raise ConfigError("bind 预设要是 {QQ号: {server, role}} 的 JSON 对象")
+    return _validate_bindmap(obj)
+
+
 def load_bindmap():
     """读 bind 预设(config.yaml 的 bind: 段); 未配置返回 {}, 损坏抛 ConfigError"""
     return load_config().get("bind") or {}
@@ -551,6 +566,76 @@ def apply_env(cfg):
         cfg["push_key"] = v
         forced.add("push_key")
     return forced
+
+
+def _in_container():
+    """粗判是否跑在 Docker 容器里(只影响提示文案, 不影响行为)"""
+    return os.path.exists("/.dockerenv")
+
+
+def materialize_env():
+    """把 WUXIA_* 环境变量的当前值写进 config.yaml(容器入口/systemd 等环境注入场景)。
+
+    与 apply_env 的运行时覆盖不同, 这里是持久化落盘: 每个键"变量非空才写、写则以变量
+    为准", 变量未设置/为空时不动文件里已有的值(想清除已写入的值用 config 子命令改文件)。
+    WUXIA_NAPCAT_TOKEN 的逗号分段与 WUXIA_NAPCAT_URL 对齐(恰一段 token 时对所有
+    端点复用, 缺位为空)。单个变量值不合法只记告警, 不影响其余变量。
+    返回 (写入的键列表, 未生效的告警列表)。
+    """
+    cfg = load_config()
+    wrote, warns = [], []
+
+    urls = [u.strip() for u in os.environ.get("WUXIA_NAPCAT_URL", "").split(",") if u.strip()]
+    if urls:
+        toks = [t.strip() for t in os.environ.get("WUXIA_NAPCAT_TOKEN", "").split(",")]
+        if len(toks) == 1 and len(urls) > 1:
+            toks = toks * len(urls)                 # 一个 token 多端点共用
+        cfg["napcat"] = [{"url": u, "token": toks[i] if i < len(toks) else ""}
+                         for i, u in enumerate(urls)]
+        wrote.append("napcat")
+        if _in_container():
+            # 容器里的 127.0.0.1/localhost 指容器自己, 十有八九是想连宿主机
+            # (host 网络模式除外, 所以只提示不拦截)
+            local = [u for u in urls
+                     if u.startswith(("http://127.0.0.1", "http://localhost",
+                                      "http://0.0.0.0"))]
+            if local:
+                warns.append("napcat 端点 %s 在容器内是容器自己, 宿主机上的 NapCat "
+                             "请改用 http://host.docker.internal:端口 "
+                             "(compose 已配 host-gateway 映射; 纯 docker run 加 "
+                             "--add-host=host.docker.internal:host-gateway)"
+                             % ", ".join(local))
+
+    v = os.environ.get("WUXIA_CHANNEL_ORDER", "").strip()
+    if v:
+        cfg["channel_order"] = channel_order(cfg, v)
+        wrote.append("channel_order")
+    v = os.environ.get("WUXIA_AUTO_BIND", "").strip()
+    if v:
+        cfg["auto_bind"] = v.lower() in ("1", "true", "yes", "on")
+        wrote.append("auto_bind")
+    v = os.environ.get("WUXIA_GIFT_INDEX", "").strip()
+    if v:
+        if v.isdigit():
+            cfg["gift_index"] = int(v)
+            wrote.append("gift_index")
+        else:
+            warns.append("WUXIA_GIFT_INDEX=%r 不是数字, 未写入" % v)
+    v = os.environ.get("WUXIA_PUSH_KEY", "").strip()
+    if v:
+        cfg["push_key"] = v
+        wrote.append("push_key")
+    v = os.environ.get("WUXIA_BIND", "").strip()
+    if v:
+        try:
+            cfg["bind"] = parse_bindmap_json(v)
+            wrote.append("bind")
+        except ConfigError as e:
+            warns.append("WUXIA_BIND 未写入(%s)" % e)
+
+    if wrote:
+        save_config(cfg)
+    return wrote, warns
 
 
 def gift_index_for(cfg, uin):

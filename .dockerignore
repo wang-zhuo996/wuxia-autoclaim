@@ -1,0 +1,18 @@
+# 与 .gitignore 同思路: 凭据/本地环境/测试不进镜像
+.git
+.gitignore
+.venv
+.pytest_cache
+.claude
+__pycache__
+*.pyc
+*.egg-info
+build/
+dist/
+tests/
+data/*
+!data/config.example.yaml
+docker-compose.yml
+Dockerfile
+.dockerignore
+uv.lock

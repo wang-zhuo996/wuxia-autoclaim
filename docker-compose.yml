@@ -1,0 +1,73 @@
+# wuxia-autoclaim 容器部署
+#
+# 用法:
+#   1. 按需改下面的 environment(至少配 NapCat 地址+token; 多号再加 WUXIA_BIND)
+#   2. docker compose up -d --build
+#   3. docker compose logs -f            # 看首轮执行
+#   4. docker compose run --rm wuxia status   # 体检角色/通道
+#
+# 环境变量在**每次启动时**写入 /data/config.yaml(变量非空才写、写则以变量为准);
+# 从这里删掉某个变量不会清除已写入的值, 清除用一次性命令:
+#   docker compose run --rm wuxia config napcat-clear
+#   docker compose run --rm wuxia config set bind {}
+# 含密钥的值建议改用 env_file(.env 不进 git): 把下面 environment 整段删掉, 启用 env_file。
+
+services:
+  wuxia:
+    build: .
+    image: wuxia-autoclaim:latest
+    container_name: wuxia-autoclaim
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      WUXIA_INTERVAL: "60"                    # 周期(分钟), 默认 60, 最小 10
+      # ---- NapCat OneBot HTTP 端点(凭据收割通道; 多个用逗号分隔) ----
+      # NapCat 在宿主机上:   http://host.docker.internal:3000
+      #   (容器里 127.0.0.1 指容器自己, 连不到宿主机; 走本地址时 NapCat 的
+      #    HTTP 服务须监听 0.0.0.0 —— 只绑 127.0.0.1 的话宿主机外的谁都够不着)
+      # NapCat 是下方侧车容器: http://napcat:3000 (同一 compose 网络)
+      # NapCat 在别的机器:   直接内网地址, 如 http://192.168.1.10:3000
+      WUXIA_NAPCAT_URL: http://host.docker.internal:3000
+      WUXIA_NAPCAT_TOKEN: "你的access-token"   # 多端点各自 token 用逗号对齐;
+                                               # 恰好一个 token 时对所有端点复用
+      # ---- 其余配置(不设就用 /data/config.yaml 里的值) ----
+      WUXIA_CHANNEL_ORDER: napcat             # 容器内没有 QQ 客户端, 一般只留 napcat
+      WUXIA_AUTO_BIND: "true"                 # 收割到新 QQ 时按 bind 预设自动绑定
+      # 自动绑定预设(QQ号 -> 服务器/角色名), JSON 整体替换:
+      # 值里有 $ 要写成 $$(compose 插值转义); 中文直接写没问题
+      WUXIA_BIND: '{"123456789": {"server": "凤凰集", "role": "测试一"}}'
+      #WUXIA_GIFT_INDEX: "3"                  # 默认许愿奖励序号(1 起); 设了会压过按角色选择
+      #WUXIA_PUSH_KEY: ""                     # Server酱 SendKey(空 = 不推送)
+    volumes:
+      - ./data:/data                          # roles.json/config.yaml/日志 持久化在宿主机
+    # 容器访问宿主机端口: host.docker.internal -> 宿主机网关
+    # (Docker Desktop 自带解析; Linux 需 Docker 20.10+ 的 host-gateway, 此行补上)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Linux 下以非 root 跑: 先在宿主机 chown 1000:1000 ./data 再启用
+    #user: "1000:1000"
+    #env_file: .env
+    # 可选健康检查: autoclaim.log 超过 2 个周期没更新视为异常
+    #healthcheck:
+    #  test: ["CMD-SHELL", "test $(( $(date +%s) - $(stat -c %Y /data/autoclaim.log 2>/dev/null || echo 0) )) -lt 7200"]
+    #  interval: 5m
+    #  timeout: 10s
+    #  retries: 2
+
+  # ---- 可选: NapCat 侧车(同一台机器没有 NapCat 时取消注释一起跑) ----
+  # 官方文档 https://napneko.github.io/guide/boot/Docker ; 登录后在 WebUI
+  # (http://<宿主机>:6099/webui) 开 HTTP 服务(端口 3000, 务必设 token,
+  # 监听 0.0.0.0 或保持容器网络互通), 上面的 WUXIA_NAPCAT_URL 填 http://napcat:3000
+  #napcat:
+  #  image: mlikiowa/napcat-docker:latest
+  #  container_name: napcat
+  #  restart: unless-stopped
+  #  environment:
+  #    TZ: Asia/Shanghai
+  #    #ACCOUNT: "123456789"                  # 预填要登录的 QQ(也可 WebUI 扫码)
+  #  ports:
+  #    - "6090:6090"                          # WebUI
+  #    - "3000:3000"                          # OneBot HTTP(建议不对外映射, 走内网网络)
+  #  volumes:
+  #    - ./napcat/QQ:/app/.config/QQ          # QQ 登录态
+  #    - ./napcat/napcat:/app/napcat/config   # NapCat 配置

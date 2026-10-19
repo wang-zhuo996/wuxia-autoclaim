@@ -79,12 +79,15 @@ def build_parser():
     c.add_parser("show", help="打印生效配置(token 脱敏)")
     q = c.add_parser("set", help="设置配置项")
     q.add_argument("key", choices=("game_dir", "channel_order", "auto_bind",
-                                   "gift_index", "push_key"))
-    q.add_argument("value", help="新值(channel_order 逗号分隔; auto_bind true/false)")
+                                   "gift_index", "push_key", "bind"))
+    q.add_argument("value", help="新值(channel_order 逗号分隔; auto_bind true/false; "
+                                 "bind 传 JSON)")
     q = c.add_parser("napcat-add", help="添加 NapCat OneBot HTTP 端点")
     q.add_argument("url", help="如 http://127.0.0.1:3000")
     q.add_argument("token", nargs="?", default="", help="OneBot access token(建议设置)")
     c.add_parser("napcat-clear", help="清空 NapCat 端点列表")
+    c.add_parser("from-env", help="把 WUXIA_* 环境变量写入 config.yaml"
+                                  "(容器入口用; 非空才写, 写则以变量为准)")
     return ap
 
 
@@ -300,10 +303,27 @@ def cmd_config(args):
             v = int(v)
         elif args.key == "channel_order":
             v = config.channel_order(cfg, v)
+        elif args.key == "bind":
+            try:
+                v = config.parse_bindmap_json(v)
+            except config.ConfigError as e:
+                log("[!] %s" % e)
+                return 2
         cfg[args.key] = v
         config.save_config(cfg)
         log("已设置 %s = %s (回写 %s)" % (args.key, v, config.config_file()))
         return 0
+    if args.config_cmd == "from-env":
+        wrote, warns = config.materialize_env()
+        for k in wrote:
+            log("[config] %s <- 环境变量" % k)
+        for w in warns:
+            log("[!] %s" % w)
+        if wrote:
+            log("已回写 %s" % config.config_file())
+        else:
+            log("[config] 没有(非空的)WUXIA_* 环境变量, 配置未改动")
+        return 1 if warns else 0
     if args.config_cmd == "napcat-add":
         eps = cfg.setdefault("napcat", [])
         eps[:] = [e for e in eps if e.get("url") != args.url]     # 同址覆盖
@@ -316,7 +336,7 @@ def cmd_config(args):
         config.save_config(cfg)
         log("已清空 napcat 端点")
         return 0
-    print("用法: wuxia-autoclaim config {show|set|napcat-add|napcat-clear}")
+    print("用法: wuxia-autoclaim config {show|set|napcat-add|napcat-clear|from-env}")
     return 2
 
 
