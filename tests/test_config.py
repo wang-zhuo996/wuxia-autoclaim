@@ -56,7 +56,7 @@ def test_gift_index_for():
     assert config.gift_index_for(cfg, "100") == 2
     assert config.gift_index_for(cfg, 100) == 2        # 容忍 int 型 uin
     assert config.gift_index_for(cfg, "200") == 3      # 无覆盖回落默认
-    assert config.gift_index_for({}, None) == 3
+    assert config.gift_index_for({}, None) == 4
 
 
 def test_upsert_role():
@@ -203,7 +203,7 @@ def test_config_load_merge():
     back = config.load_config()
     assert back["napcat"][0]["token"] == "0123"
     assert back["unknown_key"] == 1                 # 未知键透传保留
-    assert back["game_dir"] == "" and back["gift_index"] == 3
+    assert back["game_dir"] == "" and back["gift_index"] == 4
 
 
 def test_load_bom_tolerated():
@@ -445,7 +445,7 @@ def test_materialize_env_bad_values_only_warn(monkeypatch):
     assert len(warns) == 2 and any("WUXIA_GIFT_INDEX" in w for w in warns) \
         and any("WUXIA_BIND" in w for w in warns)
     back = config.load_config()
-    assert back["gift_index"] == 3 and back["bind"] == {} and back["push_key"] == "SCTok"
+    assert back["gift_index"] == 4 and back["bind"] == {} and back["push_key"] == "SCTok"
 
 
 def test_materialize_env_noop():

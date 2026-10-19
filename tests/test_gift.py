@@ -85,7 +85,7 @@ def test_gift_dead_creds(monkeypatch):
 
 
 def test_run_role_gift_priority(monkeypatch):
-    """run_role 的奖励序号取值链: 注入 role["gift_index"] > gift_override[uin] > gift_index > 3"""
+    """run_role 的奖励序号取值链: 注入 role["gift_index"] > gift_override[uin] > gift_index > 4"""
     from wuxia_autoclaim import claim
     wishes = []
 
@@ -109,4 +109,4 @@ def test_run_role_gift_priority(monkeypatch):
                                     "gift_override": {"100": 2}}) == 11  # 注入最优先
     assert wish({}, {"gift_index": 1, "gift_override": {"100": 2}}) == 22  # override 压默认
     assert wish({}, {"gift_index": 1}) == 11                            # 默认序号生效
-    assert wish({}, {}) == 22                                           # 兜底 3 越界收敛到最后一个
+    assert wish({}, {}) == 22                                           # 兜底 4 越界收敛到最后一个

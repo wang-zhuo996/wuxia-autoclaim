@@ -36,7 +36,7 @@ services:
       # 自动绑定预设(QQ号 -> 服务器/角色名), JSON 整体替换:
       # 值里有 $ 要写成 $$(compose 插值转义); 中文直接写没问题
       WUXIA_BIND: '{"123456789": {"server": "凤凰集", "role": "测试一"}}'
-      #WUXIA_GIFT_INDEX: "3"                  # 默认许愿奖励序号(1 起); 设了会压过按角色选择
+      #WUXIA_GIFT_INDEX: "4"                  # 默认许愿奖励序号(1 起); 设了会压过按角色选择
       #WUXIA_PUSH_KEY: ""                     # Server酱 SendKey(空 = 不推送)
     volumes:
       - ./data:/data                          # roles.json/config.yaml/日志 持久化在宿主机

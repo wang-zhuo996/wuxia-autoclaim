@@ -156,7 +156,7 @@ napcat:                       # NapCat OneBot HTTP 端点(可多个, 部署见�
 game_dir: ""                  # 游戏 QBrowser/QCache 目录(一般留空)
 channel_order: [napcat, qqnt] # 凭据收割通道顺序
 auto_bind: false              # 收割到新 QQ 时自动补齐绑定(活动已有绑定或 bind 预设的号)
-gift_index: 3                 # 默认许愿奖励序号(1 起); 换物品跑 gift 命令最直观
+gift_index: 4                 # 默认许愿奖励序号(1 起); 换物品跑 gift 命令最直观
 push_key: ""                  # Server酱 SendKey(空 = 不推送)
 #gift_override:               # 按 QQ 覆盖奖励序号(优先于 gift_index, gift 命令自动维护)
 #    123456789: 2
