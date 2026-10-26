@@ -7,7 +7,7 @@
     2. 体检(check_roles): 全活 -> 跳过收割
     3. 有失效且未 --no-harvest -> harvest_once 按通道顺序收割
     4. 对全部角色执行领取主流程(周末一键领取 + 每日许愿, 已许愿则秒退)
-    5. Server酱推送(所有角色都"今日已许愿"时不推, 避免每小时轰炸)
+    5. Server酱推送(所有角色都无事可做"无需操作"时不推, 避免每小时轰炸)
 
 返回退出码: 0=全部成功; 1=有角色失败; 2=致命(没有角色/数据问题)。
 """
@@ -67,8 +67,8 @@ def run(args):
 
     if args.no_push:
         return 0 if ok_n == len(results) else 1
-    if all(ok and "今日已许愿" in m for ok, m in results):
-        # 所有角色今天都已签过, 不再推送
+    if all(ok and "无需操作" in m for ok, m in results):
+        # 所有角色今天都无事可做(工作日已许愿/周末已领完), 不再推送
         log("[run] 所有角色今日已完成, 无需重复")
         return 0 if ok_n == len(results) else 1
     push_serverchan(cfg.get("push_key", ""),

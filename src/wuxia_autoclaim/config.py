@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
     "game_dir": "",                                 # QBrowser/QCache 目录(仅 game 通道)
     "channel_order": list(DEFAULT_CHANNEL_ORDER),
     "auto_bind": False,                             # 收割到新 QQ 时是否自动补齐绑定
-    "gift_index": 3,                                # 默认许愿奖励序号(1 起)
+    "gift_index": 4,                                # 默认许愿奖励序号(1 起)
     "push_key": "",                                 # Server酱 SendKey, 空=不推送
     "gift_override": {},                            # {"QQ号": 序号} 按 QQ 覆盖默认序号
     "bind": {},                                     # {"QQ号": {"server", "role"}} 自动绑定预设
@@ -361,7 +361,7 @@ def dump_config(cfg):
                  "[%s]" % ", ".join(_fmt_scalar(c) for c in (cfg.get("channel_order") or [])),
                  "凭据收割通道顺序(可用: napcat/qqnt)"))
     L.append(row("auto_bind", _fmt_scalar(cfg.get("auto_bind", False)), "收割到新 QQ 时自动补齐绑定(需活动已有绑定或 bind 预设)"))
-    L.append(row("gift_index", _fmt_scalar(cfg.get("gift_index", 3)), "默认许愿奖励序号(1 起); 想换物品跑 gift 命令最直观"))
+    L.append(row("gift_index", _fmt_scalar(cfg.get("gift_index", 4)), "默认许愿奖励序号(1 起); 想换物品跑 gift 命令最直观"))
     L.append(row("push_key", _fmt_scalar(cfg.get("push_key", "")), "Server酱 SendKey(空 = 不推送)"))
     ov = cfg.get("gift_override") or {}
     if ov:
@@ -431,7 +431,7 @@ def _normalize(user):
         raise ConfigError("config.yaml: channel_order 要是通道列表")
     cfg["channel_order"] = [str(c) for c in co]
     cfg["auto_bind"] = bool(cfg.get("auto_bind"))
-    gi = str(cfg.get("gift_index", 3))
+    gi = str(cfg.get("gift_index", 4))
     if not gi.isdigit():
         raise ConfigError("config.yaml: gift_index 要是数字(1 起)")
     cfg["gift_index"] = int(gi)
@@ -639,9 +639,9 @@ def materialize_env():
 
 
 def gift_index_for(cfg, uin):
-    """角色的生效奖励序号: gift_override[uin] > gift_index > 3。
+    """角色的生效奖励序号: gift_override[uin] > gift_index > 4。
     (命令行 --index / run 的注入不经过这里, 在 claim.run_role 里最优先)"""
-    return cfg.get("gift_override", {}).get(str(uin or "")) or cfg.get("gift_index", 3)
+    return cfg.get("gift_override", {}).get(str(uin or "")) or cfg.get("gift_index", 4)
 
 
 def upsert_role(data, area, roleid, playername, jar, uin):
