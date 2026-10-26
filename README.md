@@ -21,7 +21,8 @@
   ├─ 2. 收割   有失效时按通道顺序修复(默认 napcat -> qqnt -> game):
   │     napcat   NapCat OneBot HTTP 的 clientkey -> ptlogin2 jump 签发全套 cookie
   │     qqnt     本地 QQ 桌面客户端的快速登录桥(127.0.0.1:4301...) 同上签发
-  ├─ 3. 动作   周末且有存货 -> 一键领取; 今天未许愿 -> 按奖励序号许愿; 已许愿 -> 秒退
+  ├─ 3. 动作   周末且有存货 -> 一键领取(服务端要求当天登录过游戏, 见 FAQ);
+  │           周一至周五未许愿 -> 按奖励序号许愿; 已许愿/周末不许愿 -> 秒退
   └─ 4. 推送   Server酱微信通知(全部角色都已许愿时不打扰)
 ```
 
@@ -256,6 +257,8 @@ docker compose run --rm wuxia config show  # 看落盘后的生效配置
 
 ## 排错 FAQ
 
+- **周末「少侠请先登录游戏再领取奖励」** -> 活动服务端要求领取当天角色登录过游戏客户端,
+  纯 HTTP 绕不过: 上号进一次游戏, 下一轮 run 自动补领(等不及可 `run --claim-only` 手动补)
 - **iRet=101 登录态失效** -> 正常轮换, 保持 NapCat/QQ 在线, 下一轮 harvest 自动修复;
   长期不修复说明所有通道都不可用, 看 `harvest` 输出定位
 - **iRet=99998 未绑定大区** -> 跑一次 `wuxia-autoclaim bind` 交互完成绑定(纯 HTTP, 无需浏览器),
@@ -281,7 +284,7 @@ docker compose run --rm wuxia config show  # 看落盘后的生效配置
 
 ```bash
 pip install -e ".[dev]"
-pytest                    # 99 个纯函数单测, 不触网
+pytest                    # 116 个纯函数单测, 不触网
 ```
 
 代码风格: 纯标准库实现核心链路(urllib/argparse/sqlite3), `%` 格式化, 中文注释,

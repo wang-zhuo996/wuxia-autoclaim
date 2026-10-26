@@ -48,10 +48,16 @@ def run_role(role, cfg, interactive=False, gift_id=0, claim_only=False):
              "奖励序号=%s 今日周%s 已许愿=%s 待领奖=%d"
              % (gift_index, day, bool(signed), toget)]
 
-    # 周末: 一键领取本周奖励
-    if week in (6, 7) and toget > 0:
-        r = emit(cookie, gtk, FLOW_GET, area, roleid)
-        lines.append("周末领取: %s" % r.get("flowRet", {}).get("sMsg", ""))
+    # 周末: 一键领取本周奖励; 活动仅周一至周五允许许愿, 周末不再尝试许愿
+    if week in (6, 7):
+        if toget > 0:
+            r = emit(cookie, gtk, FLOW_GET, area, roleid)
+            lines.append("周末领取: %s" % r.get("flowRet", {}).get("sMsg", ""))
+            if is_login_expired(r) != "0":
+                return False, "\n".join(lines)   # 被服务端拒绝(如"请先登录游戏"), 推送提醒人工进游戏
+            return True, "\n".join(lines)        # 本轮刚领到, 推送一次
+        lines.append("周末无待领, 无需操作")
+        return True, "\n".join(lines)
 
     if claim_only:
         return True, "\n".join(lines)
